@@ -6,6 +6,8 @@ import Order, { IOrder } from '../models/order'
 import Product, { IProduct } from '../models/product'
 import User from '../models/user'
 
+import { commentSanitizer} from '../middlewares/commentSanitizer'
+
 // eslint-disable-next-line max-len
 // GET /orders?page=2&limit=5&sort=totalAmount&order=desc&orderDateFrom=2024-07-01&orderDateTo=2024-08-01&status=delivering&totalAmountFrom=100&totalAmountTo=1000&search=%2B1
 
@@ -27,6 +29,9 @@ export const getOrders = async (
             orderDateTo,
             search,
         } = req.query
+
+        const SaffetyForPage = Math.max(Number(page) || 1, 1)
+        const LimitForCust = Math.min(Number(limit) || 10, 10)
 
         const filters: FilterQuery<Partial<IOrder>> = {}
 
@@ -116,8 +121,8 @@ export const getOrders = async (
 
         aggregatePipeline.push(
             { $sort: sort },
-            { $skip: (Number(page) - 1) * Number(limit) },
-            { $limit: Number(limit) },
+            { $skip: (SaffetyForPage - 1) * LimitForCust },
+            { $limit: LimitForCust },
             {
                 $group: {
                     _id: '$_id',
@@ -133,15 +138,15 @@ export const getOrders = async (
 
         const orders = await Order.aggregate(aggregatePipeline)
         const totalOrders = await Order.countDocuments(filters)
-        const totalPages = Math.ceil(totalOrders / Number(limit))
+        const totalPages = Math.ceil(totalOrders / LimitForCust)
 
         res.status(200).json({
             orders,
             pagination: {
                 totalOrders,
                 totalPages,
-                currentPage: Number(page),
-                pageSize: Number(limit),
+                currentPage: SaffetyForPage,
+                pageSize: LimitForCust,
             },
         })
     } catch (error) {
@@ -155,11 +160,15 @@ export const getOrdersCurrentUser = async (
     next: NextFunction
 ) => {
     try {
+
         const userId = res.locals.user._id
         const { search, page = 1, limit = 5 } = req.query
+        const SaffetyForPage = Math.max(Number(page) || 1, 1)
+        const LimitForCust = Math.min(Number(limit) || 10, 10)
+
         const options = {
-            skip: (Number(page) - 1) * Number(limit),
-            limit: Number(limit),
+            skip: ( SaffetyForPage- 1) * LimitForCust,
+            limit: LimitForCust,
         }
 
         const user = await User.findById(userId)
@@ -185,7 +194,8 @@ export const getOrdersCurrentUser = async (
 
         if (search) {
             // если не экранировать то получаем Invalid regular expression: /+1/i: Nothing to repeat
-            const searchRegex = new RegExp(search as string, 'i')
+            const escapeRegExp = (string: string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+            const searchRegex = new RegExp(escapeRegExp(search as string), 'i')
             const searchNumber = Number(search)
             const products = await Product.find({ title: searchRegex })
             const productIds = products.map((product) => product._id)
@@ -205,7 +215,7 @@ export const getOrdersCurrentUser = async (
         }
 
         const totalOrders = orders.length
-        const totalPages = Math.ceil(totalOrders / Number(limit))
+        const totalPages = Math.ceil(totalOrders / LimitForCust)
 
         orders = orders.slice(options.skip, options.skip + options.limit)
 
@@ -214,8 +224,8 @@ export const getOrdersCurrentUser = async (
             pagination: {
                 totalOrders,
                 totalPages,
-                currentPage: Number(page),
-                pageSize: Number(limit),
+                currentPage: SaffetyForPage,
+                pageSize: LimitForCust,
             },
         })
     } catch (error) {
@@ -309,13 +319,14 @@ export const createOrder = async (
             return next(new BadRequestError('Неверная сумма заказа'))
         }
 
+        const commentSanitize = commentSanitizer(comment)
         const newOrder = new Order({
             totalAmount: total,
             products: items,
             payment,
             phone,
             email,
-            comment,
+            comment: commentSanitize,
             customer: userId,
             deliveryAddress: address,
         })

@@ -1,3 +1,5 @@
+
+import escapeRegExp from '../utils/escapeRegExp'
 import { NextFunction, Request, Response } from 'express'
 import { FilterQuery } from 'mongoose'
 import NotFoundError from '../errors/not-found-error'
@@ -29,7 +31,11 @@ export const getCustomers = async (
             search,
         } = req.query
 
+        const SaffetyForPage = Math.max(Number(page) || 1, 1)
+        const LimitForCust = Math.min(Number(limit) || 10, 10)
         const filters: FilterQuery<Partial<IUser>> = {}
+
+        
 
         if (registrationDateFrom) {
             filters.createdAt = {
@@ -92,8 +98,10 @@ export const getCustomers = async (
         }
 
         if (search) {
-            const searchRegex = new RegExp(search as string, 'i')
-            const orders = await Order.find(
+            try {
+                const safeSearch = escapeRegExp(search as string)
+                const searchRegex = new RegExp(safeSearch, 'i')
+                const orders = await Order.find(
                 {
                     $or: [{ deliveryAddress: searchRegex }],
                 },
@@ -106,6 +114,9 @@ export const getCustomers = async (
                 { name: searchRegex },
                 { lastOrder: { $in: orderIds } },
             ]
+            } catch (e) {
+                console.warn('невалидная строка', search, e)
+            }
         }
 
         const sort: { [key: string]: any } = {}
@@ -116,8 +127,8 @@ export const getCustomers = async (
 
         const options = {
             sort,
-            skip: (Number(page) - 1) * Number(limit),
-            limit: Number(limit),
+            skip: (SaffetyForPage - 1) * LimitForCust,
+            limit: LimitForCust,
         }
 
         const users = await User.find(filters, null, options).populate([
@@ -137,15 +148,15 @@ export const getCustomers = async (
         ])
 
         const totalUsers = await User.countDocuments(filters)
-        const totalPages = Math.ceil(totalUsers / Number(limit))
+        const totalPages = Math.ceil(totalUsers / LimitForCust)
 
         res.status(200).json({
             customers: users,
             pagination: {
                 totalUsers,
                 totalPages,
-                currentPage: Number(page),
-                pageSize: Number(limit),
+                currentPage: SaffetyForPage,
+                pageSize: LimitForCust,
             },
         })
     } catch (error) {
